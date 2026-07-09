@@ -1,0 +1,101 @@
+:host {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+}
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  background: var(--accent);
+  color: #fff;
+  padding: 0.5rem 1rem;
+  z-index: 100;
+  &:focus { left: 0; }
+}
+
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: color-mix(in srgb, var(--bg) 86%, transparent);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
+}
+
+.header-inner {
+  display: flex;
+  align-items: center;
+  gap: 1.4rem;
+  min-height: 56px;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  text-decoration: none;
+  color: var(--ink);
+  .brand-mark {
+    color: var(--accent);
+    font-size: 1.25rem;
+    line-height: 1;
+  }
+  .brand-name {
+    font-family: var(--font-display);
+    font-size: 1.25rem;
+    font-weight: 400;
+    letter-spacing: 0.01em;
+    b { font-weight: 800; color: var(--accent); }
+  }
+}
+
+.site-nav {
+  display: flex;
+  gap: 0.25rem;
+  margin-inline: auto;
+  overflow-x: auto;
+
+  a {
+    text-decoration: none;
+    color: var(--muted);
+    font-size: 0.88rem;
+    font-weight: 600;
+    padding: 0.4rem 0.7rem;
+    border-radius: 8px;
+    white-space: nowrap;
+
+    &:hover { color: var(--ink); background: var(--surface-2); }
+    &.active { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+    &:focus-visible { outline: 2px solid var(--accent); }
+  }
+}
+
+.theme-toggle {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 0.95rem;
+  flex-shrink: 0;
+  &:focus-visible { outline: 2px solid var(--accent); }
+}
+
+main { flex: 1; width: 100%; padding-bottom: 3rem; }
+
+.site-footer {
+  border-top: 1px solid var(--line);
+  padding: 1.4rem 0 2rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+  p { max-width: 72ch; }
+}
+
+@media (max-width: 720px) {
+  .header-inner { flex-wrap: wrap; padding-block: 0.5rem; }
+  .site-nav { order: 3; width: 100%; margin: 0; }
+}
