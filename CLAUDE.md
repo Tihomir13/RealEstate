@@ -31,7 +31,9 @@ on startup is expected/harmless.
 
 Env vars: `PORT` (default 4000), `SQLITE_PATH`, `ALLOWED_HOSTS`
 (comma-separated production domains for the SSR host guard), `DB_DRIVER` /
-`DATABASE_URL` (see below).
+`DATABASE_URL` / `MONGODB_URI` / `MONGODB_DB` (see below). `src/server.ts`
+loads a root `.env` file (gitignored, see `.env.example`) via Node's built-in
+`process.loadEnvFile()`; shell env vars take precedence over `.env` entries.
 
 ## Architecture
 
@@ -46,7 +48,7 @@ src/app/core/data/                     PropertyDataProvider (HTTP client) + SSR 
 src/app/features/                      6 standalone pages (signals, @if/@for, OnPush)
 src/app/shared/                        KPI cards, delta chips, ECharts wrappers, format pipes
 src/server/seed/                       deterministic data generator + scraper seam
-src/server/db/                         PropertyRepository interface + SQLite/Postgres impls
+src/server/db/                         PropertyRepository interface + SQLite/Postgres/Mongo impls
 src/server/analytics/                  AnalyticsEngine — all Tier 1-3 metrics
 src/server/api/router.ts               REST API (/api/...)
 src/server.ts                          Express + Angular SSR + driver selection
@@ -62,12 +64,18 @@ not a code change:
 ```bash
 DB_DRIVER=postgres DATABASE_URL=postgres://user:pass@host:5432/db \
   npm run serve:ssr:imoti-tracker
+DB_DRIVER=mongodb MONGODB_URI=mongodb+srv://user:pass@cluster/ \
+  npm run serve:ssr:imoti-tracker   # optional MONGODB_DB, default "imoti"
 ```
 
 Schema is created and seeded automatically on an empty database. For managed
 migrations use `db/migrations/001_schema.postgres.sql` (run in the Supabase
 SQL editor). Row mappers in `repository.ts` translate snake_case DB columns to
-camelCase domain types — keep that convention when adding fields.
+camelCase domain types — keep that convention when adding fields. The MongoDB
+implementation (`mongo.repository.ts`) skips the mappers: it stores camelCase
+domain documents natively and reads them back with an `{ _id: 0 }` projection.
+If `DB_DRIVER=mongodb` but `MONGODB_URI` is empty (fresh `.env`), the server
+warns and falls back to SQLite so builds and first runs still work.
 
 ### Ingestion seam
 

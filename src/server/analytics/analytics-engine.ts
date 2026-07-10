@@ -41,6 +41,7 @@ import {
   correlationDirection,
   daysBetween,
   deltaCorrelation,
+  forecastLinear,
   median,
   momentum,
   momPct,
@@ -53,10 +54,6 @@ import {
   yoyPct,
 } from '../../app/core/stats/metrics';
 import { PropertyRepository } from '../db/repository';
-
-interface Snap extends ListingSnapshot {
-  listing: Listing;
-}
 
 type Predicate = (l: Listing) => boolean;
 
@@ -73,7 +70,10 @@ export class AnalyticsEngine {
   private listings: Listing[] = [];
   private macro: MacroQuarter[] = [];
   private months: string[] = [];
-  private snapsByMonth = new Map<string, Snap[]>();
+  // Raw snapshots grouped by month — listings are looked up via `listingById`
+  // instead of being embedded per snapshot, which would double the retained heap.
+  private snapsByMonth = new Map<string, ListingSnapshot[]>();
+  private listingById = new Map<number, Listing>();
   private removalsByMonth = new Map<string, Map<number, number>>(); // month → cityId → count (sale)
   private soldByMonth = new Map<string, Map<number, number>>(); // month → cityId → closed transactions
   private citySeedBySlug = new Map(CITY_SEEDS.map((c) => [c.slug, c]));
@@ -81,6 +81,7 @@ export class AnalyticsEngine {
   private nbhdById = new Map<number, Neighborhood>();
   private cityById = new Map<number, City>();
   private cityBySlug = new Map<string, City>();
+  // Finite key space — `meta` + 2 overviews + 3 entries per city; no eviction needed.
   private cache = new Map<string, unknown>();
 
   constructor(private readonly repo: PropertyRepository) {}
@@ -102,14 +103,13 @@ export class AnalyticsEngine {
     this.cityBySlug = new Map(cities.map((c) => [c.slug, c]));
     this.nbhdById = new Map(neighborhoods.map((n) => [n.id, n]));
 
-    const byId = new Map(listings.map((l) => [l.id, l]));
+    this.listingById = new Map(listings.map((l) => [l.id, l]));
     const monthSet = new Set<string>();
     for (const s of snapshots) {
       monthSet.add(s.month);
-      const listing = byId.get(s.listingId)!;
       let arr = this.snapsByMonth.get(s.month);
       if (!arr) this.snapsByMonth.set(s.month, (arr = []));
-      arr.push({ ...s, listing });
+      arr.push(s);
     }
     this.months = [...monthSet].sort();
 
@@ -136,7 +136,7 @@ export class AnalyticsEngine {
   /* ---------------- series builders ---------------- */
 
   private monthlySeries(
-    pick: (snaps: Snap[]) => number,
+    pick: (snaps: ListingSnapshot[]) => number,
   ): SeriesPoint[] {
     return this.months.map((month) => ({
       period: month,
@@ -144,27 +144,54 @@ export class AnalyticsEngine {
     }));
   }
 
+  private listingOf(s: ListingSnapshot): Listing {
+    return this.listingById.get(s.listingId)!;
+  }
+
+  /** Snapshot prices (€) of active sale listings matching `pred` in a month. */
+  private salePrices(month: string, pred: Predicate): number[] {
+    const prices: number[] = [];
+    for (const s of this.snapsByMonth.get(month) ?? []) {
+      const l = this.listingOf(s);
+      if (l.listingType === 'sale' && pred(l)) prices.push(s.priceEur);
+    }
+    return prices;
+  }
+
   private ppm2Series(pred: Predicate, listingType: 'sale' | 'rent'): SeriesPoint[] {
     return this.monthlySeries((snaps) => {
-      const vals = snaps
-        .filter((s) => s.listing.listingType === listingType && pred(s.listing))
-        .map((s) => s.priceEurPerM2);
+      const vals: number[] = [];
+      for (const s of snaps) {
+        const l = this.listingOf(s);
+        if (l.listingType === listingType && pred(l)) vals.push(s.priceEurPerM2);
+      }
       return round(median(vals), 1) ?? 0;
     });
   }
 
   private inventorySeries(pred: Predicate): SeriesPoint[] {
-    return this.monthlySeries(
-      (snaps) => snaps.filter((s) => s.listing.listingType === 'sale' && pred(s.listing)).length,
-    );
+    return this.monthlySeries((snaps) => {
+      let count = 0;
+      for (const s of snaps) {
+        const l = this.listingOf(s);
+        if (l.listingType === 'sale' && pred(l)) count++;
+      }
+      return count;
+    });
   }
 
   private cutRateSeries(pred: Predicate): SeriesPoint[] {
     return this.monthlySeries((snaps) => {
-      const sale = snaps.filter((s) => s.listing.listingType === 'sale' && pred(s.listing));
-      if (sale.length === 0) return 0;
-      const cut = sale.filter((s) => s.priceEur < s.listing.originalPriceEur).length;
-      return round((cut / sale.length) * 100, 1) ?? 0;
+      let sale = 0;
+      let cut = 0;
+      for (const s of snaps) {
+        const l = this.listingOf(s);
+        if (l.listingType !== 'sale' || !pred(l)) continue;
+        sale++;
+        if (s.priceEur < l.originalPriceEur) cut++;
+      }
+      if (sale === 0) return 0;
+      return round((cut / sale) * 100, 1) ?? 0;
     });
   }
 
@@ -249,6 +276,7 @@ export class AnalyticsEngine {
       return {
         granularity,
         price: this.toMetric(priceMonthly, granularity),
+        priceForecast: granularity === 'month' ? forecastLinear(priceMonthly) : [],
         inventory: this.toMetric(this.inventorySeries(all), granularity, 0),
         transactions: this.toMetric(this.transactionsSeries(null), granularity, 0),
         mortgageRate: this.toMetric(this.mortgageRate, granularity, 2),
@@ -317,10 +345,7 @@ export class AnalyticsEngine {
 
       // Affordability: median dwelling price ÷ regional median annual income.
       const affordabilityMonthly = this.months.map((month) => {
-        const snaps = (this.snapsByMonth.get(month) ?? []).filter(
-          (s) => s.listing.listingType === 'sale' && pred(s.listing),
-        );
-        const medPrice = median(snaps.map((s) => s.priceEur));
+        const medPrice = median(this.salePrices(month, pred));
         const income = this.incomeForMonth(city.region, month);
         return {
           period: month,
@@ -345,20 +370,19 @@ export class AnalyticsEngine {
 
       // Price cuts.
       const cutMonthly = this.cutRateSeries(pred);
-      const lastSnaps = (this.snapsByMonth.get(lastMonth) ?? []).filter(
-        (s) => s.listing.listingType === 'sale' && pred(s.listing),
-      );
-      const discounts = lastSnaps
-        .filter((s) => s.priceEur < s.listing.originalPriceEur)
-        .map((s) => (1 - s.priceEur / s.listing.originalPriceEur) * 100);
+      const discounts: number[] = [];
+      for (const s of this.snapsByMonth.get(lastMonth) ?? []) {
+        const l = this.listingOf(s);
+        if (l.listingType !== 'sale' || !pred(l)) continue;
+        if (s.priceEur < l.originalPriceEur) {
+          discounts.push((1 - s.priceEur / l.originalPriceEur) * 100);
+        }
+      }
 
       // Per-city income (regional income × city factor) → PIR series.
       const citySeed = this.citySeedBySlug.get(city.slug) as CitySeed;
       const pirMonthly = this.months.map((month) => {
-        const snaps = (this.snapsByMonth.get(month) ?? []).filter(
-          (s) => s.listing.listingType === 'sale' && pred(s.listing),
-        );
-        const medPrice = median(snaps.map((s) => s.priceEur));
+        const medPrice = median(this.salePrices(month, pred));
         const income = this.incomeForMonth(city.region, month);
         const cityIncome = income ? income * citySeed.incomeFactor : null;
         return {
@@ -416,6 +440,8 @@ export class AnalyticsEngine {
           neighborhoodId: n.id,
           name: n.name,
           distanceFromCenterKm: n.distanceFromCenterKm,
+          lat: n.lat,
+          lng: n.lng,
           medianSaleEurPerM2: lastSale,
           medianRentEurPerM2: lastRent,
           rentalYieldPct: round(rentalYieldPct(lastRent, lastSale), 2),
@@ -446,6 +472,7 @@ export class AnalyticsEngine {
         city,
         granularity,
         price: this.toMetric(priceMonthly, granularity),
+        priceForecast: granularity === 'month' ? forecastLinear(priceMonthly) : [],
         rent: this.toMetric(rentMonthly, granularity, 2),
         inventory: this.toMetric(this.inventorySeries(pred), granularity, 0),
         priceCutRate: this.toMetric(cutMonthly, granularity),
@@ -487,8 +514,9 @@ export class AnalyticsEngine {
 
     const collect = (month: string, bucket: 'now' | 'prev') => {
       for (const s of this.snapsByMonth.get(month) ?? []) {
-        if (s.listing.listingType !== 'sale' || !pred(s.listing)) continue;
-        const key = keyOf(s.listing);
+        const l = this.listingOf(s);
+        if (l.listingType !== 'sale' || !pred(l)) continue;
+        const key = keyOf(l);
         let g = groups.get(key);
         if (!g) groups.set(key, (g = { now: [], prev: [] }));
         g[bucket].push(s.priceEurPerM2);

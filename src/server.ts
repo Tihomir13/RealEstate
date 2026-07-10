@@ -8,9 +8,17 @@ import express from 'express';
 import { join } from 'node:path';
 import { AnalyticsEngine } from './server/analytics/analytics-engine';
 import { createApiRouter } from './server/api/router';
+import { MongoRepository } from './server/db/mongo.repository';
 import { PostgresRepository } from './server/db/postgres.repository';
 import { PropertyRepository } from './server/db/repository';
 import { SqliteRepository } from './server/db/sqlite.repository';
+
+// Local config: `.env` in the project root (gitignored) — see `.env.example`.
+try {
+  process.loadEnvFile();
+} catch {
+  /* no .env file — env vars come from the shell */
+}
 
 const browserDistFolder = join(import.meta.dirname, '../browser');
 
@@ -27,10 +35,20 @@ const allowedHosts = [
 const angularApp = new AngularNodeAppEngine({ allowedHosts });
 
 /**
- * Data layer selection — swap SQLite ⇄ PostgreSQL (Supabase) via env:
- *   DB_DRIVER=postgres DATABASE_URL=postgres://...   (defaults to SQLite)
+ * Data layer selection — swap SQLite ⇄ PostgreSQL (Supabase) ⇄ MongoDB (Atlas) via env:
+ *   DB_DRIVER=postgres DATABASE_URL=postgres://...
+ *   DB_DRIVER=mongodb  MONGODB_URI=mongodb+srv://...   (defaults to SQLite)
  */
 function createRepository(): PropertyRepository {
+  if (process.env['DB_DRIVER'] === 'mongodb') {
+    const uri = process.env['MONGODB_URI'] || process.env['DATABASE_URL'];
+    if (uri) {
+      console.log('[db] using MongoDB');
+      return new MongoRepository(uri);
+    }
+    // Keeps `npm start` / builds working before the Atlas link is pasted into .env.
+    console.warn('[db] DB_DRIVER=mongodb but MONGODB_URI is empty — falling back to SQLite');
+  }
   if (process.env['DB_DRIVER'] === 'postgres') {
     const url = process.env['DATABASE_URL'];
     if (!url) throw new Error('DB_DRIVER=postgres requires DATABASE_URL');
