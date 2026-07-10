@@ -15,12 +15,15 @@ export function createApiRouter(engine: AnalyticsEngine): Router {
     res.json(engine.meta());
   });
 
-  router.get('/overview', (req, res) => {
-    res.json(engine.overview(granularityOf(req.query['granularity'])));
+  router.get('/overview', async (req, res) => {
+    res.json(await engine.overview(granularityOf(req.query['granularity'])));
   });
 
-  router.get('/cities/:slug', (req, res) => {
-    const detail = engine.cityDetail(req.params['slug'], granularityOf(req.query['granularity']));
+  router.get('/cities/:slug', async (req, res) => {
+    const detail = await engine.cityDetail(
+      req.params['slug'],
+      granularityOf(req.query['granularity']),
+    );
     if (!detail) {
       res.status(404).json({ error: 'city-not-found' });
       return;
@@ -28,16 +31,16 @@ export function createApiRouter(engine: AnalyticsEngine): Router {
     res.json(detail);
   });
 
-  router.get('/compare', (req, res) => {
+  router.get('/compare', async (req, res) => {
     const slugs = String(req.query['cities'] ?? '')
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean)
       .slice(0, 4);
-    res.json(engine.compare(slugs, granularityOf(req.query['granularity'])));
+    res.json(await engine.compare(slugs, granularityOf(req.query['granularity'])));
   });
 
-  router.get('/listings', (req, res) => {
+  router.get('/listings', async (req, res) => {
     const q = req.query;
     const num = (v: unknown) => (v == null || v === '' ? undefined : Number(v));
     const str = <T extends string>(v: unknown) => (v ? (String(v) as T) : undefined);
@@ -57,7 +60,7 @@ export function createApiRouter(engine: AnalyticsEngine): Router {
       page: num(q['page']),
       pageSize: num(q['pageSize']),
     };
-    res.json(engine.listingsPage(filter));
+    res.json(await engine.listingsPage(filter));
   });
 
   return router;

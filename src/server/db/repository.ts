@@ -1,23 +1,77 @@
 /**
  * Persistence seam. The analytics engine reads ONLY through this interface,
- * so swapping SQLite ⇄ PostgreSQL (Supabase) is a configuration change.
+ * so swapping SQLite ⇄ PostgreSQL (Supabase) ⇄ MongoDB (Atlas) is a
+ * configuration change. Queries are scoped (one city / one month / a filtered
+ * listings page) rather than "load everything" so the app never needs to hold
+ * the full dataset in memory — the DB does the filtering, the analytics
+ * engine's pure stats functions do the math on the resulting small set.
  */
 import {
   City,
+  ConstructionType,
   Listing,
-  ListingSnapshot,
+  ListingStatus,
+  ListingType,
   MacroQuarter,
   Neighborhood,
+  PropertyType,
 } from '../../app/core/models/domain.models';
+
+/** A snapshot row enriched with the listing fields needed to filter/group it,
+ * so per-city and per-month queries never need a join. */
+export interface DenormSnapshot {
+  listingId: number;
+  month: string; // 'YYYY-MM'
+  priceEur: number;
+  priceEurPerM2: number;
+  cityId: number;
+  neighborhoodId: number;
+  propertyType: PropertyType;
+  construction: ConstructionType;
+  buildYear: number;
+  listingType: ListingType;
+  originalPriceEur: number;
+}
+
+/** Minimal shape needed to compute days-on-market and the sold/removed split. */
+export interface RemovedListing {
+  id: number;
+  cityId: number;
+  firstSeenDate: string;
+  lastSeenDate: string;
+}
+
+export interface ListingsQuery {
+  cityId?: number;
+  neighborhoodId?: number;
+  propertyType?: PropertyType;
+  construction?: ConstructionType;
+  listingType?: ListingType;
+  status?: ListingStatus;
+  minPrice?: number;
+  maxPrice?: number;
+  minArea?: number;
+  maxArea?: number;
+}
 
 export interface PropertyRepository {
   /** Creates the schema if missing and seeds it when empty. */
   init(): Promise<void>;
   loadCities(): Promise<City[]>;
   loadNeighborhoods(): Promise<Neighborhood[]>;
-  loadListings(): Promise<Listing[]>;
-  loadSnapshots(): Promise<ListingSnapshot[]>;
   loadMacro(): Promise<MacroQuarter[]>;
+  /** Distinct snapshot months, ascending. */
+  loadMonths(): Promise<string[]>;
+  /** All snapshot rows for one city, across every month. */
+  snapshotsForCity(cityId: number): Promise<DenormSnapshot[]>;
+  /** All snapshot rows for one month, across every city. */
+  snapshotsForMonth(month: string): Promise<DenormSnapshot[]>;
+  /** Every removed sale listing (the only ones feeding DOM / sold-volume stats). */
+  removedSaleListings(): Promise<RemovedListing[]>;
+  /** WHERE-filtered listings for the `/api/listings` page (unsorted, unpaginated —
+   * sorting/pagination stay in the analytics engine since a couple of sort keys
+   * are derived fields, not stored columns). */
+  listingsMatching(query: ListingsQuery): Promise<Listing[]>;
   close(): Promise<void>;
 }
 
@@ -65,6 +119,13 @@ export const SCHEMA_STATEMENTS: string[] = [
     snapshot_month TEXT NOT NULL,
     price_eur REAL NOT NULL,
     price_eur_per_m2 REAL NOT NULL,
+    city_id INTEGER NOT NULL REFERENCES cities(id),
+    neighborhood_id INTEGER NOT NULL REFERENCES neighborhoods(id),
+    property_type TEXT NOT NULL,
+    construction TEXT NOT NULL,
+    build_year INTEGER NOT NULL,
+    listing_type TEXT NOT NULL,
+    original_price_eur REAL NOT NULL,
     PRIMARY KEY (listing_id, snapshot_month)
   )`,
   `CREATE TABLE IF NOT EXISTS macro_quarters (
@@ -77,6 +138,8 @@ export const SCHEMA_STATEMENTS: string[] = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_listings_city ON listings(city_id)`,
   `CREATE INDEX IF NOT EXISTS idx_snapshots_month ON listing_snapshots(snapshot_month)`,
+  `CREATE INDEX IF NOT EXISTS idx_snapshots_city_month ON listing_snapshots(city_id, snapshot_month)`,
+  `CREATE INDEX IF NOT EXISTS idx_listings_removed_sale ON listings(current_status, listing_type)`,
 ];
 
 /* ---------- row mappers (snake_case DB → camelCase domain) ---------- */
@@ -127,13 +190,74 @@ export function mapListing(r: Record<string, unknown>): Listing {
   };
 }
 
-export function mapSnapshot(r: Record<string, unknown>): ListingSnapshot {
+export function mapDenormSnapshot(r: Record<string, unknown>): DenormSnapshot {
   return {
     listingId: Number(r['listing_id']),
     month: String(r['snapshot_month']),
     priceEur: Number(r['price_eur']),
     priceEurPerM2: Number(r['price_eur_per_m2']),
+    cityId: Number(r['city_id']),
+    neighborhoodId: Number(r['neighborhood_id']),
+    propertyType: r['property_type'] as DenormSnapshot['propertyType'],
+    construction: r['construction'] as DenormSnapshot['construction'],
+    buildYear: Number(r['build_year']),
+    listingType: r['listing_type'] as DenormSnapshot['listingType'],
+    originalPriceEur: Number(r['original_price_eur']),
   };
+}
+
+export function mapRemovedListing(r: Record<string, unknown>): RemovedListing {
+  return {
+    id: Number(r['id']),
+    cityId: Number(r['city_id']),
+    firstSeenDate: String(r['first_seen_date']),
+    lastSeenDate: String(r['last_seen_date']),
+  };
+}
+
+/**
+ * Shared WHERE-clause builder for `listingsMatching`, used by both SQL repos.
+ * `placeholder(n)` renders the n-th bind parameter (`?` for SQLite, `$n` for Postgres).
+ */
+export function buildListingsWhereSql(
+  query: ListingsQuery,
+  placeholder: (n: number) => string,
+): { sql: string; values: unknown[] } {
+  const conditions: string[] = [];
+  const values: unknown[] = [];
+  const add = (column: string, value: unknown) => {
+    values.push(value);
+    conditions.push(`${column} = ${placeholder(values.length)}`);
+  };
+  // Truthy checks (not `!= null`) mirror the original in-memory filter's
+  // `if (filter.x && ...)` semantics exactly, including the `0`-is-ignored quirk.
+  if (query.cityId != null) add('city_id', query.cityId);
+  if (query.neighborhoodId) add('neighborhood_id', query.neighborhoodId);
+  if (query.propertyType) add('property_type', query.propertyType);
+  if (query.construction) add('construction', query.construction);
+  if (query.listingType) add('listing_type', query.listingType);
+  if (query.status) {
+    add('current_status', query.status);
+  } else {
+    conditions.push("current_status != 'removed'"); // default: active market
+  }
+  if (query.minPrice) {
+    values.push(query.minPrice);
+    conditions.push(`price_eur >= ${placeholder(values.length)}`);
+  }
+  if (query.maxPrice) {
+    values.push(query.maxPrice);
+    conditions.push(`price_eur <= ${placeholder(values.length)}`);
+  }
+  if (query.minArea) {
+    values.push(query.minArea);
+    conditions.push(`area_m2 >= ${placeholder(values.length)}`);
+  }
+  if (query.maxArea) {
+    values.push(query.maxArea);
+    conditions.push(`area_m2 <= ${placeholder(values.length)}`);
+  }
+  return { sql: conditions.length ? `WHERE ${conditions.join(' AND ')}` : '', values };
 }
 
 export function mapMacro(r: Record<string, unknown>): MacroQuarter {

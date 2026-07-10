@@ -77,6 +77,20 @@ domain documents natively and reads them back with an `{ _id: 0 }` projection.
 If `DB_DRIVER=mongodb` but `MONGODB_URI` is empty (fresh `.env`), the server
 warns and falls back to SQLite so builds and first runs still work.
 
+The repository is **scoped, not "load everything"**: besides the small tables
+(`loadCities`/`loadNeighborhoods`/`loadMacro`/`loadMonths`), it exposes
+`snapshotsForCity`/`snapshotsForMonth`/`removedSaleListings`/`listingsMatching`
+— each answers one city, one month, or one WHERE-filtered page. `listing_snapshots`
+carries a handful of columns denormalized from the parent listing (`city_id`,
+`neighborhood_id`, `property_type`, `construction`, `build_year`,
+`listing_type`, `original_price_eur`) precisely so these scoped queries never
+need a join. This keeps the DB responsible for filtering while `metrics.ts`'s
+pure functions do the math on the resulting small set — deliberately *not*
+reimplemented as SQL/Mongo aggregations, since that would fork business logic
+per driver. **Changing the snapshot schema requires recreating the database**
+(delete `data/imoti.db`, drop the Postgres tables, drop the Mongo collections)
+since `init()` only auto-seeds when `listings` is empty.
+
 ### Ingestion seam
 
 `ExternalListingSource` (`src/server/seed/listing-source.ts`) has two
@@ -100,10 +114,15 @@ yield, price-cut share, months-of-supply, DOM, affordability (price ÷ income),
 a hedonic model (ridge OLS in log space, powering `predictedEurPerM2` /
 overpriced%), a 0-100 overheating index, price momentum (2nd derivative), and
 the price-vs-distance-from-center gradient. `AnalyticsEngine`
-(`src/server/analytics/analytics-engine.ts`) builds in-memory indexes over the
-repository data and caches every computed payload, so API responses are O(1)
-after warm-up — when adding a metric, compute it once in the engine rather
-than per-request.
+(`src/server/analytics/analytics-engine.ts`) keeps only small tables resident
+(cities, neighborhoods, macro, months, removed-sale listings); a city's or
+month's snapshot rows are fetched from the repository lazily on cache miss,
+reduced to a payload (~50KB) by the pure functions, and cached indefinitely —
+the raw rows fall out of scope afterward. Cache keys are a finite,
+enumerable set (`meta`, `global-monthly-series`, 2 overviews, 3 entries per
+city), so there's no eviction logic. When adding a metric, compute it once
+per cache entry rather than per-request, and prefer extending the existing
+per-city/per-month fetch over adding a new "load everything" query.
 
 ### API (`src/server/api/router.ts`)
 

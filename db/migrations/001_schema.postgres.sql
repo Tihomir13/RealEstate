@@ -48,6 +48,13 @@ CREATE TABLE IF NOT EXISTS listing_snapshots (
   snapshot_month TEXT NOT NULL,
   price_eur REAL NOT NULL,
   price_eur_per_m2 REAL NOT NULL,
+  city_id INTEGER NOT NULL REFERENCES cities(id),
+  neighborhood_id INTEGER NOT NULL REFERENCES neighborhoods(id),
+  property_type TEXT NOT NULL,
+  construction TEXT NOT NULL,
+  build_year INTEGER NOT NULL,
+  listing_type TEXT NOT NULL,
+  original_price_eur REAL NOT NULL,
   PRIMARY KEY (listing_id, snapshot_month)
 );
 
@@ -62,3 +69,5 @@ CREATE TABLE IF NOT EXISTS macro_quarters (
 
 CREATE INDEX IF NOT EXISTS idx_listings_city ON listings(city_id);
 CREATE INDEX IF NOT EXISTS idx_snapshots_month ON listing_snapshots(snapshot_month);
+CREATE INDEX IF NOT EXISTS idx_snapshots_city_month ON listing_snapshots(city_id, snapshot_month);
+CREATE INDEX IF NOT EXISTS idx_listings_removed_sale ON listings(current_status, listing_type);

@@ -9,21 +9,20 @@ import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { SeedListingSource } from '../seed/listing-source';
 import {
+  buildListingsWhereSql,
+  DenormSnapshot,
+  ListingsQuery,
   mapCity,
+  mapDenormSnapshot,
   mapListing,
   mapMacro,
   mapNeighborhood,
-  mapSnapshot,
+  mapRemovedListing,
   PropertyRepository,
+  RemovedListing,
   SCHEMA_STATEMENTS,
 } from './repository';
-import {
-  City,
-  Listing,
-  ListingSnapshot,
-  MacroQuarter,
-  Neighborhood,
-} from '../../app/core/models/domain.models';
+import { City, Listing, MacroQuarter, Neighborhood } from '../../app/core/models/domain.models';
 
 export class SqliteRepository implements PropertyRepository {
   private db!: DatabaseSync;
@@ -76,11 +75,22 @@ export class SqliteRepository implements PropertyRepository {
         );
       }
 
+      const listingById = new Map(ds.listings.map((l) => [l.id, l]));
       const insSnap = this.db.prepare(
-        `INSERT INTO listing_snapshots (listing_id, snapshot_month, price_eur, price_eur_per_m2)
-         VALUES (?,?,?,?)`,
+        `INSERT INTO listing_snapshots (
+           listing_id, snapshot_month, price_eur, price_eur_per_m2,
+           city_id, neighborhood_id, property_type, construction, build_year,
+           listing_type, original_price_eur
+         ) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
       );
-      for (const s of ds.snapshots) insSnap.run(s.listingId, s.month, s.priceEur, s.priceEurPerM2);
+      for (const s of ds.snapshots) {
+        const l = listingById.get(s.listingId)!;
+        insSnap.run(
+          s.listingId, s.month, s.priceEur, s.priceEurPerM2,
+          l.cityId, l.neighborhoodId, l.propertyType, l.construction, l.buildYear,
+          l.listingType, l.originalPriceEur,
+        );
+      }
 
       const insMacro = this.db.prepare(
         `INSERT INTO macro_quarters (region, quarter, house_price_index, median_annual_income_eur, rent_index)
@@ -105,23 +115,63 @@ export class SqliteRepository implements PropertyRepository {
     return Promise.resolve(rows.map(map));
   }
 
+  private allParams<T>(
+    sql: string,
+    params: (number | string)[],
+    map: (r: Record<string, unknown>) => T,
+  ): Promise<T[]> {
+    const rows = this.db.prepare(sql).all(...params) as Record<string, unknown>[];
+    return Promise.resolve(rows.map(map));
+  }
+
   loadCities(): Promise<City[]> {
     return this.all('SELECT * FROM cities ORDER BY id', mapCity);
   }
   loadNeighborhoods(): Promise<Neighborhood[]> {
     return this.all('SELECT * FROM neighborhoods ORDER BY id', mapNeighborhood);
   }
-  loadListings(): Promise<Listing[]> {
-    return this.all('SELECT * FROM listings ORDER BY id', mapListing);
-  }
-  loadSnapshots(): Promise<ListingSnapshot[]> {
-    return this.all(
-      'SELECT * FROM listing_snapshots ORDER BY snapshot_month, listing_id',
-      mapSnapshot,
-    );
-  }
   loadMacro(): Promise<MacroQuarter[]> {
     return this.all('SELECT * FROM macro_quarters ORDER BY region, quarter', mapMacro);
+  }
+
+  loadMonths(): Promise<string[]> {
+    const rows = this.db
+      .prepare('SELECT DISTINCT snapshot_month AS m FROM listing_snapshots ORDER BY m')
+      .all() as { m: string }[];
+    return Promise.resolve(rows.map((r) => r.m));
+  }
+
+  snapshotsForCity(cityId: number): Promise<DenormSnapshot[]> {
+    return this.allParams(
+      'SELECT * FROM listing_snapshots WHERE city_id = ? ORDER BY snapshot_month',
+      [cityId],
+      mapDenormSnapshot,
+    );
+  }
+
+  snapshotsForMonth(month: string): Promise<DenormSnapshot[]> {
+    return this.allParams(
+      'SELECT * FROM listing_snapshots WHERE snapshot_month = ?',
+      [month],
+      mapDenormSnapshot,
+    );
+  }
+
+  removedSaleListings(): Promise<RemovedListing[]> {
+    return this.all(
+      `SELECT id, city_id, first_seen_date, last_seen_date FROM listings
+       WHERE current_status = 'removed' AND listing_type = 'sale'`,
+      mapRemovedListing,
+    );
+  }
+
+  listingsMatching(query: ListingsQuery): Promise<Listing[]> {
+    const { sql: where, values } = buildListingsWhereSql(query, () => '?');
+    return this.allParams(
+      `SELECT * FROM listings ${where} ORDER BY id`,
+      values as (number | string)[],
+      mapListing,
+    );
   }
 
   async close(): Promise<void> {

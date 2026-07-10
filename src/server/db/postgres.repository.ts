@@ -9,21 +9,20 @@
 import { Pool } from 'pg';
 import { SeedListingSource } from '../seed/listing-source';
 import {
+  buildListingsWhereSql,
+  DenormSnapshot,
+  ListingsQuery,
   mapCity,
+  mapDenormSnapshot,
   mapListing,
   mapMacro,
   mapNeighborhood,
-  mapSnapshot,
+  mapRemovedListing,
   PropertyRepository,
+  RemovedListing,
   SCHEMA_STATEMENTS,
 } from './repository';
-import {
-  City,
-  Listing,
-  ListingSnapshot,
-  MacroQuarter,
-  Neighborhood,
-} from '../../app/core/models/domain.models';
+import { City, Listing, MacroQuarter, Neighborhood } from '../../app/core/models/domain.models';
 
 export class PostgresRepository implements PropertyRepository {
   private pool: Pool;
@@ -62,7 +61,7 @@ export class PostgresRepository implements PropertyRepository {
       // Batched multi-row inserts for the two large tables.
       await batchInsert(client, ds.listings, 500, (l) => [
         l.id, l.cityId, l.neighborhoodId, l.propertyType, l.construction, l.buildYear, l.floor,
-        l.areaM2, l.priceEur, l.priceEurPerM2, l.listingType, l.isNew,
+        l.areaM2, l.priceEur, l.priceEurPerM2, l.listingType, l.isNew ? 1 : 0,
         l.firstSeenDate, l.lastSeenDate, l.currentStatus, l.originalPriceEur,
         l.predictedEurPerM2 ?? null,
       ], `INSERT INTO listings (
@@ -71,10 +70,19 @@ export class PostgresRepository implements PropertyRepository {
             first_seen_date, last_seen_date, current_status, original_price_eur, predicted_eur_per_m2
           ) VALUES %VALUES%`, 17);
 
-      await batchInsert(client, ds.snapshots, 1000, (s) => [
-        s.listingId, s.month, s.priceEur, s.priceEurPerM2,
-      ], `INSERT INTO listing_snapshots (listing_id, snapshot_month, price_eur, price_eur_per_m2)
-          VALUES %VALUES%`, 4);
+      const listingById = new Map(ds.listings.map((l) => [l.id, l]));
+      await batchInsert(client, ds.snapshots, 1000, (s) => {
+        const l = listingById.get(s.listingId)!;
+        return [
+          s.listingId, s.month, s.priceEur, s.priceEurPerM2,
+          l.cityId, l.neighborhoodId, l.propertyType, l.construction, l.buildYear,
+          l.listingType, l.originalPriceEur,
+        ];
+      }, `INSERT INTO listing_snapshots (
+            listing_id, snapshot_month, price_eur, price_eur_per_m2,
+            city_id, neighborhood_id, property_type, construction, build_year,
+            listing_type, original_price_eur
+          ) VALUES %VALUES%`, 11);
 
       for (const m of ds.macro) {
         await client.query(
@@ -99,20 +107,59 @@ export class PostgresRepository implements PropertyRepository {
     return res.rows.map(map);
   }
 
+  private async allParams<T>(
+    sql: string,
+    params: unknown[],
+    map: (r: Record<string, unknown>) => T,
+  ): Promise<T[]> {
+    const res = await this.pool.query(sql, params);
+    return res.rows.map(map);
+  }
+
   loadCities(): Promise<City[]> {
     return this.all('SELECT * FROM cities ORDER BY id', mapCity);
   }
   loadNeighborhoods(): Promise<Neighborhood[]> {
     return this.all('SELECT * FROM neighborhoods ORDER BY id', mapNeighborhood);
   }
-  loadListings(): Promise<Listing[]> {
-    return this.all('SELECT * FROM listings ORDER BY id', mapListing);
-  }
-  loadSnapshots(): Promise<ListingSnapshot[]> {
-    return this.all('SELECT * FROM listing_snapshots ORDER BY snapshot_month, listing_id', mapSnapshot);
-  }
   loadMacro(): Promise<MacroQuarter[]> {
     return this.all('SELECT * FROM macro_quarters ORDER BY region, quarter', mapMacro);
+  }
+
+  async loadMonths(): Promise<string[]> {
+    const res = await this.pool.query(
+      'SELECT DISTINCT snapshot_month AS m FROM listing_snapshots ORDER BY m',
+    );
+    return res.rows.map((r) => r.m as string);
+  }
+
+  snapshotsForCity(cityId: number): Promise<DenormSnapshot[]> {
+    return this.allParams(
+      'SELECT * FROM listing_snapshots WHERE city_id = $1 ORDER BY snapshot_month',
+      [cityId],
+      mapDenormSnapshot,
+    );
+  }
+
+  snapshotsForMonth(month: string): Promise<DenormSnapshot[]> {
+    return this.allParams(
+      'SELECT * FROM listing_snapshots WHERE snapshot_month = $1',
+      [month],
+      mapDenormSnapshot,
+    );
+  }
+
+  removedSaleListings(): Promise<RemovedListing[]> {
+    return this.all(
+      `SELECT id, city_id, first_seen_date, last_seen_date FROM listings
+       WHERE current_status = 'removed' AND listing_type = 'sale'`,
+      mapRemovedListing,
+    );
+  }
+
+  listingsMatching(query: ListingsQuery): Promise<Listing[]> {
+    const { sql: where, values } = buildListingsWhereSql(query, (n) => `$${n}`);
+    return this.allParams(`SELECT * FROM listings ${where} ORDER BY id`, values, mapListing);
   }
 
   async close(): Promise<void> {
