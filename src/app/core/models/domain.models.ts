@@ -23,6 +23,8 @@ export interface City {
   name: string; // Bulgarian display name
   region: string; // NSI statistical region key
   population: number;
+  lat: number;
+  lng: number;
 }
 
 export interface Neighborhood {
@@ -31,6 +33,8 @@ export interface Neighborhood {
   name: string; // Bulgarian display name
   priceMultiplier: number;
   distanceFromCenterKm: number;
+  lat: number;
+  lng: number;
 }
 
 export interface Listing {
@@ -98,6 +102,8 @@ export interface NeighborhoodStats {
   neighborhoodId: number;
   name: string;
   distanceFromCenterKm: number;
+  lat: number;
+  lng: number;
   medianSaleEurPerM2: number;
   medianRentEurPerM2: number;
   rentalYieldPct: number | null;
@@ -150,6 +156,8 @@ export interface CityDetail {
   city: City;
   granularity: Granularity;
   price: MetricSeries; // median €/m² (sale)
+  /** Naive linear-trend extrapolation beyond the last actual month; [] if unavailable. */
+  priceForecast: SeriesPoint[];
   rent: MetricSeries; // median €/m²/mo
   inventory: MetricSeries; // active listings
   priceCutRate: MetricSeries; // % of active listings cut
@@ -177,6 +185,8 @@ export interface CityDetail {
 export interface NationalOverview {
   granularity: Granularity;
   price: MetricSeries;
+  /** Naive linear-trend extrapolation beyond the last actual month; [] if unavailable. */
+  priceForecast: SeriesPoint[];
   inventory: MetricSeries;
   transactions: MetricSeries;
   mortgageRate: MetricSeries;

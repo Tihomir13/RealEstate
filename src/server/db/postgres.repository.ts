@@ -47,15 +47,15 @@ export class PostgresRepository implements PropertyRepository {
 
       for (const c of ds.cities) {
         await client.query(
-          'INSERT INTO cities (id, slug, name, region, population) VALUES ($1,$2,$3,$4,$5)',
-          [c.id, c.slug, c.name, c.region, c.population],
+          'INSERT INTO cities (id, slug, name, region, population, lat, lng) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+          [c.id, c.slug, c.name, c.region, c.population, c.lat, c.lng],
         );
       }
       for (const n of ds.neighborhoods) {
         await client.query(
-          `INSERT INTO neighborhoods (id, city_id, name, price_multiplier, distance_from_center_km)
-           VALUES ($1,$2,$3,$4,$5)`,
-          [n.id, n.cityId, n.name, n.priceMultiplier, n.distanceFromCenterKm],
+          `INSERT INTO neighborhoods (id, city_id, name, price_multiplier, distance_from_center_km, lat, lng)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [n.id, n.cityId, n.name, n.priceMultiplier, n.distanceFromCenterKm, n.lat, n.lng],
         );
       }
 

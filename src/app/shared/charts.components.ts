@@ -16,6 +16,8 @@ import { ThemeService } from '../core/services/theme.service';
 export interface NamedSeries {
   name: string;
   series: SeriesPoint[];
+  /** Dashed line, no area fill — used for forecast/projected continuations. */
+  projected?: boolean;
 }
 
 function palette(dark: boolean): string[] {
@@ -78,7 +80,10 @@ export class TrendChartComponent {
     const colors = palette(dark);
     const t = baseText(dark);
     const all = this.data();
-    const periods = all[0]?.series.map((p) => fmtPeriod(p.period)) ?? [];
+    const periodSet = new Set<string>();
+    for (const s of all) for (const p of s.series) periodSet.add(p.period);
+    const rawPeriods = [...periodSet].sort();
+    const periods = rawPeriods.map(fmtPeriod);
     const multi = all.length > 1;
     const unit = this.unit();
 
@@ -128,23 +133,26 @@ export class TrendChartComponent {
               formatter: (v: number) => fmtInt(v),
             },
           },
-      series: all.map((s, i) => ({
-        name: s.name,
-        type: this.kind(),
-        yAxisIndex: this.dualAxis() && i === 1 ? 1 : 0,
-        smooth: 0.25,
-        symbol: 'none',
-        emphasis: { focus: multi ? 'series' : 'none' },
-        lineStyle: { width: 2.4 },
-        areaStyle:
-          !multi && this.kind() === 'line'
-            ? {
-                opacity: 0.14,
-                color: colors[i],
-              }
-            : undefined,
-        data: s.series.map((p) => p.value),
-      })),
+      series: all.map((s, i) => {
+        const byPeriod = new Map(s.series.map((p) => [p.period, p.value]));
+        return {
+          name: s.name,
+          type: this.kind(),
+          yAxisIndex: this.dualAxis() && i === 1 ? 1 : 0,
+          smooth: 0.25,
+          symbol: 'none',
+          emphasis: { focus: multi ? 'series' : 'none' },
+          lineStyle: { width: 2.4, type: s.projected ? 'dashed' : 'solid' },
+          areaStyle:
+            !multi && this.kind() === 'line' && !s.projected
+              ? {
+                  opacity: 0.14,
+                  color: colors[i],
+                }
+              : undefined,
+          data: rawPeriods.map((period) => byPeriod.get(period) ?? null),
+        };
+      }),
     };
   });
 }

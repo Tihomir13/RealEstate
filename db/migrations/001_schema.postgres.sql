@@ -8,7 +8,9 @@ CREATE TABLE IF NOT EXISTS cities (
   slug TEXT NOT NULL UNIQUE,
   name TEXT NOT NULL,
   region TEXT NOT NULL,
-  population INTEGER NOT NULL
+  population INTEGER NOT NULL,
+  lat REAL NOT NULL,
+  lng REAL NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS neighborhoods (
@@ -16,7 +18,9 @@ CREATE TABLE IF NOT EXISTS neighborhoods (
   city_id INTEGER NOT NULL REFERENCES cities(id),
   name TEXT NOT NULL,
   price_multiplier REAL NOT NULL,
-  distance_from_center_km REAL NOT NULL
+  distance_from_center_km REAL NOT NULL,
+  lat REAL NOT NULL,
+  lng REAL NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS listings (

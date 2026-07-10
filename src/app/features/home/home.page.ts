@@ -5,9 +5,9 @@ import { RouterLink } from '@angular/router';
 import { switchMap } from 'rxjs';
 import { PropertyDataProvider } from '../../core/data/property-data.provider';
 import { fmt2, fmtEurPerM2, fmtInt } from '../../core/i18n/labels';
-import { Granularity, SeriesPoint } from '../../core/models/domain.models';
+import { Granularity, NationalOverview, SeriesPoint } from '../../core/models/domain.models';
 import { lastN } from '../../core/stats/metrics';
-import { SparklineComponent, TrendChartComponent, GaugeChartComponent } from '../../shared/charts.components';
+import { NamedSeries, SparklineComponent, TrendChartComponent, GaugeChartComponent } from '../../shared/charts.components';
 import { PctPipe } from '../../shared/format.pipes';
 import {
   DeltaChipComponent,
@@ -70,10 +70,7 @@ import {
         <div class="card">
           <h3>Цена срещу обем на сделките</h3>
           <app-trend-chart
-            [data]="[
-              { name: 'Медиана €/м²', series: ranged(o.price.series) },
-              { name: 'Сделки/месец', series: ranged(o.transactions.series) },
-            ]"
+            [data]="priceChartSeries(o)"
             [dualAxis]="true"
             ariaLabel="Цена на кв.м срещу брой сключени сделки — разминаването е водещ индикатор"
           />
@@ -240,6 +237,16 @@ export class HomePage {
   ranged(series: SeriesPoint[]): SeriesPoint[] {
     const n = this.rangeMonths();
     return lastN(series, this.granularity() === 'year' ? Math.ceil(n / 12) : n);
+  }
+
+  priceChartSeries(o: NationalOverview): NamedSeries[] {
+    const base: NamedSeries[] = [
+      { name: 'Медиана €/м²', series: this.ranged(o.price.series) },
+      { name: 'Сделки/месец', series: this.ranged(o.transactions.series) },
+    ];
+    return o.priceForecast.length
+      ? [...base, { name: 'Прогноза (линеен тренд)', series: o.priceForecast, projected: true }]
+      : base;
   }
 
   periodLabel(): string {

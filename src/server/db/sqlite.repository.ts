@@ -46,16 +46,18 @@ export class SqliteRepository implements PropertyRepository {
     this.db.exec('BEGIN');
     try {
       const insCity = this.db.prepare(
-        'INSERT INTO cities (id, slug, name, region, population) VALUES (?,?,?,?,?)',
+        'INSERT INTO cities (id, slug, name, region, population, lat, lng) VALUES (?,?,?,?,?,?,?)',
       );
-      for (const c of ds.cities) insCity.run(c.id, c.slug, c.name, c.region, c.population);
+      for (const c of ds.cities) {
+        insCity.run(c.id, c.slug, c.name, c.region, c.population, c.lat, c.lng);
+      }
 
       const insNbhd = this.db.prepare(
-        `INSERT INTO neighborhoods (id, city_id, name, price_multiplier, distance_from_center_km)
-         VALUES (?,?,?,?,?)`,
+        `INSERT INTO neighborhoods (id, city_id, name, price_multiplier, distance_from_center_km, lat, lng)
+         VALUES (?,?,?,?,?,?,?)`,
       );
       for (const n of ds.neighborhoods) {
-        insNbhd.run(n.id, n.cityId, n.name, n.priceMultiplier, n.distanceFromCenterKm);
+        insNbhd.run(n.id, n.cityId, n.name, n.priceMultiplier, n.distanceFromCenterKm, n.lat, n.lng);
       }
 
       const insListing = this.db.prepare(

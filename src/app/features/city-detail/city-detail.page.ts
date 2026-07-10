@@ -13,9 +13,10 @@ import {
   fmtInt,
   PROPERTY_TYPE_BG,
 } from '../../core/i18n/labels';
-import { BreakdownRow, Granularity, SeriesPoint } from '../../core/models/domain.models';
+import { BreakdownRow, CityDetail, Granularity, SeriesPoint } from '../../core/models/domain.models';
 import { lastN } from '../../core/stats/metrics';
-import { GaugeChartComponent, TrendChartComponent } from '../../shared/charts.components';
+import { GaugeChartComponent, NamedSeries, TrendChartComponent } from '../../shared/charts.components';
+import { NeighborhoodMapComponent } from '../../shared/neighborhood-map.component';
 import { Bg1Pipe, Bg2Pipe, BgIntPipe, EurM2Pipe, PctPipe } from '../../shared/format.pipes';
 import {
   DeltaChipComponent,
@@ -37,6 +38,7 @@ import {
     DeltaChipComponent,
     TrendChartComponent,
     GaugeChartComponent,
+    NeighborhoodMapComponent,
     EurM2Pipe,
     BgIntPipe,
     Bg1Pipe,
@@ -84,10 +86,7 @@ import {
         <div class="card">
           <h3>Цена срещу обем на сделките</h3>
           <app-trend-chart
-            [data]="[
-              { name: 'Медиана €/м²', series: ranged(d.price.series) },
-              { name: 'Сделки/месец', series: ranged(d.transactions.series) },
-            ]"
+            [data]="priceChartSeries(d)"
             [dualAxis]="true"
             ariaLabel="Цена срещу брой сключени сделки — разминаването е водещ индикатор"
           />
@@ -213,35 +212,51 @@ import {
         />
       </div>
 
-      <h2>Квартали</h2>
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Квартал</th>
-              <th class="num">км от центъра</th>
-              <th class="num">Продажба €/м²</th>
-              <th class="num">Наем €/м²</th>
-              <th class="num">Доходност</th>
-              <th class="num">ГоГ</th>
-              <th class="num">Обяви</th>
-            </tr>
-          </thead>
-          <tbody>
-            @for (n of d.neighborhoods; track n.neighborhoodId) {
-              <tr>
-                <td class="strong">{{ n.name }}</td>
-                <td class="num muted">{{ n.distanceFromCenterKm | bg1 }}</td>
-                <td class="num strong">{{ n.medianSaleEurPerM2 | eurM2 }}</td>
-                <td class="num">{{ n.medianRentEurPerM2 | bg2 }} €</td>
-                <td class="num">{{ n.rentalYieldPct | bg2 }} %</td>
-                <td class="num"><app-delta-chip [value]="n.yoyPct" label="ГоГ" /></td>
-                <td class="num">{{ n.activeListings | bgInt }}</td>
-              </tr>
-            }
-          </tbody>
-        </table>
+      <div class="section-head">
+        <h2>Квартали</h2>
+        <div class="view-toggle" role="group" aria-label="Изглед на кварталите">
+          <button type="button" [class.active]="nbhdView() === 'table'" (click)="nbhdView.set('table')">
+            Таблица
+          </button>
+          <button type="button" [class.active]="nbhdView() === 'map'" (click)="nbhdView.set('map')">
+            Карта
+          </button>
+        </div>
       </div>
+      @if (nbhdView() === 'table') {
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Квартал</th>
+                <th class="num">км от центъра</th>
+                <th class="num">Продажба €/м²</th>
+                <th class="num">Наем €/м²</th>
+                <th class="num">Доходност</th>
+                <th class="num">ГоГ</th>
+                <th class="num">Обяви</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (n of d.neighborhoods; track n.neighborhoodId) {
+                <tr>
+                  <td class="strong">{{ n.name }}</td>
+                  <td class="num muted">{{ n.distanceFromCenterKm | bg1 }}</td>
+                  <td class="num strong">{{ n.medianSaleEurPerM2 | eurM2 }}</td>
+                  <td class="num">{{ n.medianRentEurPerM2 | bg2 }} €</td>
+                  <td class="num">{{ n.rentalYieldPct | bg2 }} %</td>
+                  <td class="num"><app-delta-chip [value]="n.yoyPct" label="ГоГ" /></td>
+                  <td class="num">{{ n.activeListings | bgInt }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      } @else {
+        <div class="card">
+          <app-neighborhood-map [data]="d.neighborhoods" metric="price" [ariaLabel]="'Карта на кварталите в ' + d.city.name" />
+        </div>
+      }
 
       <h2>Срезове на пазара</h2>
       <div class="grid cols-3">
@@ -288,6 +303,33 @@ import {
   `,
   styles: `
     .charts-row { margin-top: 1rem; }
+    .section-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      flex-wrap: wrap;
+      h2 { margin: 2rem 0 0.9rem; }
+    }
+    .view-toggle {
+      display: inline-flex;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      overflow: hidden;
+      background: var(--surface);
+      button {
+        border: 0;
+        background: transparent;
+        color: var(--muted);
+        font: inherit;
+        font-size: 0.8rem;
+        font-weight: 600;
+        padding: 0.35rem 0.9rem;
+        cursor: pointer;
+        &.active { background: var(--accent); color: #fff; }
+        &:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+      }
+    }
     .strong { font-weight: 700; }
     .muted { color: var(--muted); }
     .note { font-size: 0.78rem; color: var(--muted); margin: 0; }
@@ -317,6 +359,7 @@ export class CityDetailPage {
 
   readonly granularity = signal<Granularity>('month');
   readonly rangeMonths = signal<number>(24);
+  readonly nbhdView = signal<'table' | 'map'>('table');
 
   readonly detail = toSignal(
     combineLatest([toObservable(this.slug), toObservable(this.granularity)]).pipe(
@@ -344,6 +387,16 @@ export class CityDetailPage {
   ranged(series: SeriesPoint[]): SeriesPoint[] {
     const n = this.rangeMonths();
     return lastN(series, this.granularity() === 'year' ? Math.ceil(n / 12) : n);
+  }
+
+  priceChartSeries(d: CityDetail): NamedSeries[] {
+    const base: NamedSeries[] = [
+      { name: 'Медиана €/м²', series: this.ranged(d.price.series) },
+      { name: 'Сделки/месец', series: this.ranged(d.transactions.series) },
+    ];
+    return d.priceForecast.length
+      ? [...base, { name: 'Прогноза (линеен тренд)', series: d.priceForecast, projected: true }]
+      : base;
   }
 
   corrLabel(dir: 'negative' | 'positive' | 'neutral'): string {

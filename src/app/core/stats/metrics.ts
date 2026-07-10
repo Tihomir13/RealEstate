@@ -101,19 +101,26 @@ export function momentum(series: SeriesPoint[], window = 6): number {
   return olsSlope(growth.map((y, x) => [x, y]));
 }
 
-/** OLS slope for [x, y] pairs. */
-export function olsSlope(points: [number, number][]): number {
+/** OLS fit for [x, y] pairs: slope + intercept. slope=0, intercept=mean(y) if n<2 or degenerate. */
+export function olsFit(points: [number, number][]): { slope: number; intercept: number } {
   const n = points.length;
-  if (n < 2) return 0;
+  if (n === 0) return { slope: 0, intercept: 0 };
   const mx = average(points.map((p) => p[0]));
   const my = average(points.map((p) => p[1]));
+  if (n < 2) return { slope: 0, intercept: my };
   let num = 0;
   let den = 0;
   for (const [x, y] of points) {
     num += (x - mx) * (y - my);
     den += (x - mx) ** 2;
   }
-  return den === 0 ? 0 : num / den;
+  const slope = den === 0 ? 0 : num / den;
+  return { slope, intercept: my - slope * mx };
+}
+
+/** OLS slope for [x, y] pairs. */
+export function olsSlope(points: [number, number][]): number {
+  return points.length < 2 ? 0 : olsFit(points).slope;
 }
 
 /**
@@ -302,4 +309,57 @@ export function supplyPressure(supplyYoYPct: number | null, priceYoYPct: number 
 /** Take the trailing `n` points of a series (n<=0 → whole series). */
 export function lastN(series: SeriesPoint[], n: number): SeriesPoint[] {
   return n > 0 && series.length > n ? series.slice(series.length - n) : series;
+}
+
+/** Adds n months to a 'YYYY-MM' period (only month granularity is forecastable). */
+export function addMonths(period: string, n: number): string {
+  const [y, m] = period.split('-').map(Number);
+  const total = y * 12 + (m - 1) + n;
+  const ny = Math.floor(total / 12);
+  const nm = (total % 12) + 1;
+  return `${ny}-${String(nm).padStart(2, '0')}`;
+}
+
+/**
+ * Naive linear-trend price forecast: OLS fit of the trailing `window` months,
+ * extrapolated `horizon` months forward. This is a transparent continuation of
+ * the recent trend, NOT a predictive model — it ignores seasonality, shocks,
+ * and trend reversals. Returns [] when there isn't enough history, or when the
+ * trailing window doesn't fit a line well (R² below `minR2`), consistent with
+ * other guard-clause conventions in this file (momentum→0, momPct→null).
+ * The first point of the result is the last actual month (anchor, so a chart
+ * can draw a gap-free dashed continuation); the rest are future months.
+ */
+export function forecastLinear(
+  series: SeriesPoint[],
+  horizon = 6,
+  window = 12,
+  minR2 = 0.25,
+): SeriesPoint[] {
+  if (series.length < window) return [];
+  const trailing = series.slice(series.length - window);
+  const points: [number, number][] = trailing.map((p, i) => [i, p.value]);
+  const { slope, intercept } = olsFit(points);
+
+  const yMean = average(points.map((p) => p[1]));
+  let ssRes = 0;
+  let ssTot = 0;
+  for (const [x, y] of points) {
+    const pred = intercept + slope * x;
+    ssRes += (y - pred) ** 2;
+    ssTot += (y - yMean) ** 2;
+  }
+  const r2 = ssTot === 0 ? 0 : 1 - ssRes / ssTot;
+  if (r2 < minR2) return [];
+
+  const last = series[series.length - 1];
+  const lastX = trailing.length - 1;
+  const out: SeriesPoint[] = [{ period: last.period, value: last.value }];
+  for (let h = 1; h <= horizon; h++) {
+    out.push({
+      period: addMonths(last.period, h),
+      value: Math.max(0, intercept + slope * (lastX + h)),
+    });
+  }
+  return out;
 }

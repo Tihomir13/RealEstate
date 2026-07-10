@@ -28,14 +28,18 @@ export const SCHEMA_STATEMENTS: string[] = [
     slug TEXT NOT NULL UNIQUE,
     name TEXT NOT NULL,
     region TEXT NOT NULL,
-    population INTEGER NOT NULL
+    population INTEGER NOT NULL,
+    lat REAL NOT NULL,
+    lng REAL NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS neighborhoods (
     id INTEGER PRIMARY KEY,
     city_id INTEGER NOT NULL REFERENCES cities(id),
     name TEXT NOT NULL,
     price_multiplier REAL NOT NULL,
-    distance_from_center_km REAL NOT NULL
+    distance_from_center_km REAL NOT NULL,
+    lat REAL NOT NULL,
+    lng REAL NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS listings (
     id INTEGER PRIMARY KEY,
@@ -84,6 +88,8 @@ export function mapCity(r: Record<string, unknown>): City {
     name: String(r['name']),
     region: String(r['region']),
     population: Number(r['population']),
+    lat: Number(r['lat']),
+    lng: Number(r['lng']),
   };
 }
 
@@ -94,6 +100,8 @@ export function mapNeighborhood(r: Record<string, unknown>): Neighborhood {
     name: String(r['name']),
     priceMultiplier: Number(r['price_multiplier']),
     distanceFromCenterKm: Number(r['distance_from_center_km']),
+    lat: Number(r['lat']),
+    lng: Number(r['lng']),
   };
 }
 

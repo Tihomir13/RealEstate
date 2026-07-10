@@ -144,6 +144,8 @@ export function generateSeedDataset(): SeedDataset {
       name: seed.name,
       region: seed.region,
       population: seed.population,
+      lat: seed.lat,
+      lng: seed.lng,
     };
     cities.push(city);
 
@@ -170,6 +172,8 @@ export function generateSeedDataset(): SeedDataset {
         name: n.name,
         priceMultiplier: +(n.base / seed.neighborhoods[0].base).toFixed(3),
         distanceFromCenterKm: n.distanceKm,
+        lat: n.lat,
+        lng: n.lng,
       };
       neighborhoods.push(nb);
 

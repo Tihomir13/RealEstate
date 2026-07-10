@@ -112,9 +112,13 @@ describe('metrics (pure functions)', () => {
 });
 
 import {
+  addMonths,
   correlationDirection,
   deltaCorrelation,
+  forecastLinear,
   lastN,
+  olsFit,
+  olsSlope,
   pearson,
   priceToRentYears,
   supplyPressure,
@@ -154,5 +158,63 @@ describe('macro metric additions', () => {
     expect(lastN(s, 2).map((p) => p.value)).toEqual([4, 5]);
     expect(lastN(s, 0).length).toBe(5);
     expect(lastN(s, 99).length).toBe(5);
+  });
+});
+
+describe('olsFit / olsSlope', () => {
+  it('olsFit recovers a known line y = 3x + 10', () => {
+    const pts: [number, number][] = [0, 1, 2, 3, 4].map((x) => [x, 3 * x + 10]);
+    const { slope, intercept } = olsFit(pts);
+    expect(slope).toBeCloseTo(3);
+    expect(intercept).toBeCloseTo(10);
+  });
+
+  it('olsSlope behavior is unchanged after the olsFit refactor', () => {
+    const pts: [number, number][] = [
+      [0, 1],
+      [1, 3],
+      [2, 2],
+      [3, 5],
+    ];
+    expect(olsSlope(pts)).toBeCloseTo(1.1);
+    expect(olsSlope([[0, 1]])).toBe(0);
+    expect(olsSlope([])).toBe(0);
+  });
+});
+
+describe('addMonths', () => {
+  it('adds months within the same year', () => {
+    expect(addMonths('2026-03', 2)).toBe('2026-05');
+  });
+
+  it('rolls over into the next year', () => {
+    expect(addMonths('2026-11', 3)).toBe('2027-02');
+  });
+});
+
+describe('forecastLinear', () => {
+  it('extrapolates a known linear trend, anchored at the last actual point', () => {
+    const series = Array.from({ length: 18 }, (_, i) => ({
+      period: addMonths('2024-01', i),
+      value: 1000 + 15 * i,
+    }));
+    const result = forecastLinear(series);
+    expect(result[0]).toEqual(series[series.length - 1]);
+    expect(result[1].period).toBe(addMonths(series[series.length - 1].period, 1));
+    expect(result[1].value).toBeCloseTo(1000 + 15 * 18, 0);
+    expect(result[6].value).toBeCloseTo(1000 + 15 * 23, 0);
+  });
+
+  it('returns [] when there is not enough history', () => {
+    const series = Array.from({ length: 6 }, (_, i) => ({ period: addMonths('2025-01', i), value: 100 + i }));
+    expect(forecastLinear(series)).toEqual([]);
+  });
+
+  it('returns [] for a volatile, trendless series (low R²)', () => {
+    const series = Array.from({ length: 14 }, (_, i) => ({
+      period: addMonths('2024-01', i),
+      value: 1000 + (i % 2 === 0 ? 50 : -50),
+    }));
+    expect(forecastLinear(series)).toEqual([]);
   });
 });
