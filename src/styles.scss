@@ -106,10 +106,22 @@ a { color: var(--accent); }
 }
 
 .table-wrap {
+  position: relative;
   overflow-x: auto;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
+
+  /* Scroll-shadow hint: fades appear only where there's more content to scroll to. */
+  background-image:
+    linear-gradient(to right, var(--surface), transparent),
+    linear-gradient(to left, var(--surface), transparent),
+    linear-gradient(to right, rgba(0, 0, 0, 0.12), transparent),
+    linear-gradient(to left, rgba(0, 0, 0, 0.12), transparent);
+  background-position: left, right, left, right;
+  background-repeat: no-repeat;
+  background-size: 24px 100%, 24px 100%, 10px 100%, 10px 100%;
+  background-attachment: local, local, scroll, scroll;
 }
 
 /* Form controls */
@@ -123,6 +135,16 @@ select, input[type='number'] {
   font-size: 0.85rem;
   min-width: 0;
   &:focus-visible { outline: 2px solid var(--accent); }
+}
+
+@media (max-width: 720px) {
+  .data-table {
+    font-size: 0.82rem;
+    th, td { padding: 0.42rem 0.55rem; }
+  }
+  select, input[type='number'], .btn {
+    padding: 0.55rem 0.7rem;
+  }
 }
 
 label.field {

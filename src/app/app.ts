@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { ThemeService } from './core/services/theme.service';
 
@@ -11,4 +11,5 @@ import { ThemeService } from './core/services/theme.service';
 })
 export class App {
   protected readonly theme = inject(ThemeService);
+  protected readonly navOpen = signal(false);
 }

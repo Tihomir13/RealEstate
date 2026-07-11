@@ -51,6 +51,20 @@
   }
 }
 
+.nav-toggle {
+  display: none;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 1.1rem;
+  flex-shrink: 0;
+  &:focus-visible { outline: 2px solid var(--accent); }
+}
+
 .site-nav {
   display: flex;
   gap: 0.25rem;
@@ -76,8 +90,8 @@
   border: 1px solid var(--line);
   background: var(--surface);
   color: var(--ink);
-  width: 34px;
-  height: 34px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
   cursor: pointer;
   font-size: 0.95rem;
@@ -101,6 +115,29 @@ main {
 }
 
 @media (max-width: 720px) {
-  .header-inner { flex-wrap: wrap; padding-block: 0.5rem; }
-  .site-nav { order: 3; width: 100%; margin: 0; }
+  .nav-toggle { display: inline-flex; align-items: center; justify-content: center; order: 2; }
+  .theme-toggle { order: 3; }
+
+  .site-nav {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    margin: 0;
+    flex-direction: column;
+    gap: 0;
+    overflow-x: visible;
+    background: var(--surface);
+    border-bottom: 1px solid var(--line);
+    box-shadow: 0 12px 24px -12px rgba(0, 0, 0, 0.25);
+
+    &.open { display: flex; }
+
+    a {
+      padding: 0.85rem 1.2rem;
+      border-radius: 0;
+      width: 100%;
+    }
+  }
 }

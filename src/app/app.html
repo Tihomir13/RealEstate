@@ -7,7 +7,18 @@
       <span class="brand-name">Имоти<b>Пулс</b></span>
     </a>
 
-    <nav class="site-nav" aria-label="Основна навигация">
+    <button
+      type="button"
+      class="nav-toggle"
+      (click)="navOpen.set(!navOpen())"
+      [attr.aria-expanded]="navOpen()"
+      aria-controls="site-nav"
+      aria-label="Отвори менюто"
+    >
+      ☰
+    </button>
+
+    <nav id="site-nav" class="site-nav" [class.open]="navOpen()" aria-label="Основна навигация" (click)="navOpen.set(false)">
       <a routerLink="/" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: true }">Обзор</a>
       <a routerLink="/gradove" routerLinkActive="active">Градове</a>
       <a routerLink="/sravnenie" routerLinkActive="active">Сравнение</a>

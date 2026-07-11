@@ -171,6 +171,9 @@ import { GranularityToggleComponent, PageHeaderComponent } from '../../shared/ui
       &.disabled { opacity: 0.45; cursor: default; }
       input { accent-color: var(--accent); }
     }
+    @media (max-width: 720px) {
+      .pick { padding: 0.3rem 0; }
+    }
     .charts-row { margin-top: 1rem; }
     .strong { font-weight: 700; }
     .hot { color: var(--down); font-weight: 700; }

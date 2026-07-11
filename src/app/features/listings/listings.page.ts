@@ -194,6 +194,9 @@ type SortKey = NonNullable<ListingsFilter['sort']>;
       gap: 0.7rem;
       margin-bottom: 1rem;
     }
+    @media (max-width: 480px) {
+      .filters { grid-template-columns: 1fr; }
+    }
     .count { color: var(--muted); font-size: 0.85rem; }
     .strong { font-weight: 700; }
     .muted { color: var(--muted); }
