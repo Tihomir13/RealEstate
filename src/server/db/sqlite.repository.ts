@@ -11,6 +11,8 @@ import { SeedListingSource } from '../seed/listing-source';
 import {
   buildListingsWhereSql,
   DenormSnapshot,
+  ListingsPageQuery,
+  ListingsPageResult,
   ListingsQuery,
   mapCity,
   mapDenormSnapshot,
@@ -21,6 +23,8 @@ import {
   PropertyRepository,
   RemovedListing,
   SCHEMA_STATEMENTS,
+  seedAllowedOnEmpty,
+  SORT_COLUMNS,
 } from './repository';
 import { City, Listing, MacroQuarter, Neighborhood } from '../../app/core/models/domain.models';
 
@@ -36,7 +40,7 @@ export class SqliteRepository implements PropertyRepository {
     for (const stmt of SCHEMA_STATEMENTS) this.db.exec(stmt);
 
     const row = this.db.prepare('SELECT COUNT(*) AS c FROM listings').get() as { c: number };
-    if (Number(row.c) === 0) this.seed();
+    if (Number(row.c) === 0 && seedAllowedOnEmpty('SQLite')) this.seed();
   }
 
   private seed(): void {
@@ -172,6 +176,24 @@ export class SqliteRepository implements PropertyRepository {
       values as (number | string)[],
       mapListing,
     );
+  }
+
+  async listingsPageMatching(
+    query: ListingsQuery,
+    page: ListingsPageQuery,
+  ): Promise<ListingsPageResult> {
+    const { sql: where, values } = buildListingsWhereSql(query, () => '?');
+    const params = values as (number | string)[];
+    const countRow = this.db
+      .prepare(`SELECT COUNT(*) AS c FROM listings ${where}`)
+      .get(...params) as { c: number };
+    const order = `${SORT_COLUMNS[page.sort].sql} ${page.dir === 'asc' ? 'ASC' : 'DESC'}, id ASC`;
+    const rows = await this.allParams(
+      `SELECT * FROM listings ${where} ORDER BY ${order} LIMIT ? OFFSET ?`,
+      [...params, page.limit, page.offset],
+      mapListing,
+    );
+    return { rows, total: Number(countRow.c) };
   }
 
   async close(): Promise<void> {

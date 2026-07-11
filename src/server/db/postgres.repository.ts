@@ -11,6 +11,8 @@ import { SeedListingSource } from '../seed/listing-source';
 import {
   buildListingsWhereSql,
   DenormSnapshot,
+  ListingsPageQuery,
+  ListingsPageResult,
   ListingsQuery,
   mapCity,
   mapDenormSnapshot,
@@ -21,6 +23,8 @@ import {
   PropertyRepository,
   RemovedListing,
   SCHEMA_STATEMENTS,
+  seedAllowedOnEmpty,
+  SORT_COLUMNS,
 } from './repository';
 import { City, Listing, MacroQuarter, Neighborhood } from '../../app/core/models/domain.models';
 
@@ -34,7 +38,7 @@ export class PostgresRepository implements PropertyRepository {
   async init(): Promise<void> {
     for (const stmt of SCHEMA_STATEMENTS) await this.pool.query(stmt);
     const res = await this.pool.query('SELECT COUNT(*)::int AS c FROM listings');
-    if (res.rows[0].c === 0) await this.seed();
+    if (res.rows[0].c === 0 && seedAllowedOnEmpty('PostgreSQL')) await this.seed();
   }
 
   private async seed(): Promise<void> {
@@ -160,6 +164,25 @@ export class PostgresRepository implements PropertyRepository {
   listingsMatching(query: ListingsQuery): Promise<Listing[]> {
     const { sql: where, values } = buildListingsWhereSql(query, (n) => `$${n}`);
     return this.allParams(`SELECT * FROM listings ${where} ORDER BY id`, values, mapListing);
+  }
+
+  async listingsPageMatching(
+    query: ListingsQuery,
+    page: ListingsPageQuery,
+  ): Promise<ListingsPageResult> {
+    const { sql: where, values } = buildListingsWhereSql(query, (n) => `$${n}`);
+    const count = await this.pool.query(
+      `SELECT COUNT(*)::int AS c FROM listings ${where}`,
+      values,
+    );
+    const order = `${SORT_COLUMNS[page.sort].sql} ${page.dir === 'asc' ? 'ASC' : 'DESC'}, id ASC`;
+    const rows = await this.allParams(
+      `SELECT * FROM listings ${where} ORDER BY ${order}
+       LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+      [...values, page.limit, page.offset],
+      mapListing,
+    );
+    return { rows, total: count.rows[0].c as number };
   }
 
   async close(): Promise<void> {

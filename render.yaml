@@ -1,0 +1,33 @@
+# Render.com blueprint (https://render.com/docs/blueprint-spec).
+# The free tier gives 512MB RAM and kills the process on RSS overrun, hence
+# the V8 heap cap below — without it V8 lets the heap grow past the container
+# limit before GC-ing aggressively, and the OOM killer wins.
+#
+# The production database must be pre-seeded (MongoDB Atlas): seed it once
+# from a dev machine (`DB_DRIVER=mongodb MONGODB_URI=... npm run
+# serve:ssr:imoti-tracker`, wait for "[db] seeded MongoDB", stop). With
+# NODE_ENV=production the server refuses to auto-seed an empty database —
+# the in-memory seed dataset is itself an OOM risk at 512MB.
+services:
+  - type: web
+    name: imoti-tracker
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm run serve:ssr:imoti-tracker
+    healthCheckPath: /api/meta
+    envVars:
+      - key: NODE_VERSION
+        value: 22.16.0 # node:sqlite fallback needs ≥ 22.13
+      - key: NODE_ENV
+        value: production
+      - key: NODE_OPTIONS
+        # Measured: full warmup sweep peaks at ~350MB RSS with this cap
+        # (vs ~380MB at 384 and ~465MB uncapped) with no failed requests.
+        value: --max-old-space-size=256
+      - key: DB_DRIVER
+        value: mongodb
+      - key: MONGODB_URI
+        sync: false # set in the Render dashboard (secret)
+      - key: ALLOWED_HOSTS
+        sync: false # e.g. imoti-tracker.onrender.com

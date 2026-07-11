@@ -217,7 +217,7 @@ export class AnalyticsEngine {
    * driver (e.g. Mongo Atlas) that alone can take longer than Angular's SSR
    * stabilization timeout. */
   private async computeGlobalMonthlySeries(): Promise<MonthlySeries> {
-    const BATCH = 40;
+    const BATCH = 10;
     const statsByMonth: MonthStats[] = new Array(this.months.length);
     for (let i = 0; i < this.months.length; i += BATCH) {
       const batchMonths = this.months.slice(i, i + BATCH);
@@ -315,7 +315,7 @@ export class AnalyticsEngine {
       const [{ price: priceMonthly, rent: rentMonthly, inventory: invMonthly }, summaries] =
         await Promise.all([
           this.cachedAsync('global-monthly-series', () => this.computeGlobalMonthlySeries()),
-          Promise.all(this.cities.map((c) => this.citySummary(c))),
+          this.computeCitySummaries(),
         ]);
       const priceYoY = yoyPct(priceMonthly, 'month') ?? 0;
       const rentYoY = yoyPct(rentMonthly, 'month') ?? 0;
@@ -345,6 +345,20 @@ export class AnalyticsEngine {
         cities: summaries,
       } satisfies NationalOverview;
     });
+  }
+
+  /** Bounded-batch counterpart to computeGlobalMonthlySeries: each city's
+   * summary pulls its full snapshot history, so fanning out all cities at
+   * once transiently holds the entire listing_snapshots table in memory. */
+  private async computeCitySummaries(): Promise<CitySummary[]> {
+    const BATCH = 3;
+    const summaries: CitySummary[] = [];
+    for (let i = 0; i < this.cities.length; i += BATCH) {
+      const batchCities = this.cities.slice(i, i + BATCH);
+      const batchSummaries = await Promise.all(batchCities.map((c) => this.citySummary(c)));
+      summaries.push(...batchSummaries);
+    }
+    return summaries;
   }
 
   private async citySummary(city: City): Promise<CitySummary> {
@@ -598,7 +612,7 @@ export class AnalyticsEngine {
   async listingsPage(filter: ListingsFilter): Promise<ListingsPage> {
     const lastMonth = this.months[this.months.length - 1];
     const city = filter.city ? this.cityBySlug.get(filter.city) : undefined;
-    const rows = await this.repo.listingsMatching({
+    const repoQuery = {
       cityId: city?.id,
       neighborhoodId: filter.neighborhoodId,
       propertyType: filter.propertyType,
@@ -609,7 +623,7 @@ export class AnalyticsEngine {
       maxPrice: filter.maxPrice,
       minArea: filter.minArea,
       maxArea: filter.maxArea,
-    });
+    };
 
     const enrich = (l: Listing): ListingRow => {
       const endDate = l.currentStatus === 'removed' ? l.lastSeenDate : `${lastMonth}-28`;
@@ -630,16 +644,32 @@ export class AnalyticsEngine {
       };
     };
 
-    const dir = filter.dir === 'asc' ? 1 : -1;
     const sortKey = filter.sort ?? 'ppm2';
+    const pageSize = Math.min(filter.pageSize ?? 25, 100);
+    const page = Math.max(filter.page ?? 1, 1);
+
+    // Stored-column sorts (the default included): ORDER BY + LIMIT/OFFSET run
+    // in the DB, so only one page of rows is ever materialized here.
+    if (sortKey === 'price' || sortKey === 'ppm2') {
+      const { rows, total } = await this.repo.listingsPageMatching(repoQuery, {
+        sort: sortKey,
+        dir: filter.dir === 'asc' ? 'asc' : 'desc',
+        limit: pageSize,
+        offset: (page - 1) * pageSize,
+      });
+      return { total, page, pageSize, rows: rows.map(enrich) };
+    }
+
+    // Derived sort keys (dom / overpriced / discount) are computed during
+    // enrichment, so the full filtered set is sorted here.
+    const rows = await this.repo.listingsMatching(repoQuery);
+    const dir = filter.dir === 'asc' ? 1 : -1;
     const enriched = rows.map(enrich).sort((a, b) => {
       const va = sortValue(a, sortKey);
       const vb = sortValue(b, sortKey);
       return (va - vb) * dir;
     });
 
-    const pageSize = Math.min(filter.pageSize ?? 25, 100);
-    const page = Math.max(filter.page ?? 1, 1);
     return {
       total: enriched.length,
       page,

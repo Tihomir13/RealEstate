@@ -12,7 +12,16 @@
  */
 import { Collection, Db, Document, Filter, MongoClient, Sort } from 'mongodb';
 import { SeedListingSource } from '../seed/listing-source';
-import { DenormSnapshot, ListingsQuery, PropertyRepository, RemovedListing } from './repository';
+import {
+  DenormSnapshot,
+  ListingsPageQuery,
+  ListingsPageResult,
+  ListingsQuery,
+  PropertyRepository,
+  RemovedListing,
+  seedAllowedOnEmpty,
+  SORT_COLUMNS,
+} from './repository';
 import { City, Listing, MacroQuarter, Neighborhood } from '../../app/core/models/domain.models';
 
 export class MongoRepository implements PropertyRepository {
@@ -33,7 +42,7 @@ export class MongoRepository implements PropertyRepository {
     this.db = this.client.db(this.dbName);
     await this.ensureIndexes();
     const count = await this.db.collection('listings').countDocuments();
-    if (count === 0) await this.seed();
+    if (count === 0 && seedAllowedOnEmpty('MongoDB')) await this.seed();
   }
 
   private async ensureIndexes(): Promise<void> {
@@ -135,9 +144,9 @@ export class MongoRepository implements PropertyRepository {
       .toArray() as unknown as Promise<RemovedListing[]>;
   }
 
-  listingsMatching(query: ListingsQuery): Promise<Listing[]> {
-    // Truthy checks (not `!= null`) mirror the original in-memory filter's
-    // `if (filter.x && ...)` semantics exactly, including the `0`-is-ignored quirk.
+  /** Truthy checks (not `!= null`) mirror the original in-memory filter's
+   * `if (filter.x && ...)` semantics exactly, including the `0`-is-ignored quirk. */
+  private listingsFilter(query: ListingsQuery): Filter<Document> {
     const filter: Filter<Document> = {};
     if (query.cityId != null) filter['cityId'] = query.cityId;
     if (query.neighborhoodId) filter['neighborhoodId'] = query.neighborhoodId;
@@ -158,11 +167,33 @@ export class MongoRepository implements PropertyRepository {
         ...(query.maxArea ? { $lte: query.maxArea } : {}),
       };
     }
+    return filter;
+  }
+
+  listingsMatching(query: ListingsQuery): Promise<Listing[]> {
     return this.db
       .collection('listings')
-      .find(filter, { projection: { _id: 0 } })
+      .find(this.listingsFilter(query), { projection: { _id: 0 } })
       .sort({ id: 1 })
       .toArray() as unknown as Promise<Listing[]>;
+  }
+
+  async listingsPageMatching(
+    query: ListingsQuery,
+    page: ListingsPageQuery,
+  ): Promise<ListingsPageResult> {
+    const filter = this.listingsFilter(query);
+    const coll = this.db.collection('listings');
+    const [total, rows] = await Promise.all([
+      coll.countDocuments(filter),
+      coll
+        .find(filter, { projection: { _id: 0 } })
+        .sort({ [SORT_COLUMNS[page.sort].mongo]: page.dir === 'asc' ? 1 : -1, id: 1 })
+        .skip(page.offset)
+        .limit(page.limit)
+        .toArray() as unknown as Promise<Listing[]>,
+    ]);
+    return { rows, total };
   }
 
   async close(): Promise<void> {

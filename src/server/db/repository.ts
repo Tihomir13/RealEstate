@@ -54,6 +54,24 @@ export interface ListingsQuery {
   maxArea?: number;
 }
 
+/** Sort keys that map directly to stored columns, so ORDER BY + LIMIT/OFFSET
+ * can run in the DB. Derived keys (dom, overpriced, discount) stay in the
+ * analytics engine's JS fallback path. */
+export type StoredSortKey = 'price' | 'ppm2';
+
+export interface ListingsPageQuery {
+  sort: StoredSortKey;
+  dir: 'asc' | 'desc';
+  limit: number;
+  offset: number;
+}
+
+export interface ListingsPageResult {
+  rows: Listing[];
+  /** Total rows matching the filter (ignoring limit/offset). */
+  total: number;
+}
+
 export interface PropertyRepository {
   /** Creates the schema if missing and seeds it when empty. */
   init(): Promise<void>;
@@ -68,11 +86,39 @@ export interface PropertyRepository {
   snapshotsForMonth(month: string): Promise<DenormSnapshot[]>;
   /** Every removed sale listing (the only ones feeding DOM / sold-volume stats). */
   removedSaleListings(): Promise<RemovedListing[]>;
-  /** WHERE-filtered listings for the `/api/listings` page (unsorted, unpaginated —
-   * sorting/pagination stay in the analytics engine since a couple of sort keys
-   * are derived fields, not stored columns). */
+  /** WHERE-filtered listings for the `/api/listings` page (unsorted, unpaginated).
+   * Fallback path for sort keys derived in the analytics engine (dom,
+   * overpriced, discount) — stored-column sorts go through `listingsPageMatching`. */
   listingsMatching(query: ListingsQuery): Promise<Listing[]>;
+  /** One sorted page of WHERE-filtered listings plus the total match count —
+   * ORDER BY/LIMIT/OFFSET run in the DB so per-request memory is bounded by
+   * the page size, not the full result set. */
+  listingsPageMatching(query: ListingsQuery, page: ListingsPageQuery): Promise<ListingsPageResult>;
   close(): Promise<void>;
+}
+
+/** Stored-column sort key → SQL column (SQL repos) / document field (Mongo). */
+export const SORT_COLUMNS: Record<StoredSortKey, { sql: string; mongo: string }> = {
+  price: { sql: 'price_eur', mongo: 'priceEur' },
+  ppm2: { sql: 'price_eur_per_m2', mongo: 'priceEurPerM2' },
+};
+
+/**
+ * Guard against the seed's transient memory spike on small production
+ * instances (e.g. Render 512MB): building the full dataset in memory is fine
+ * locally, but in production an empty database almost always means a
+ * misconfigured connection string — warn loudly instead of OOM-ing silently.
+ * Set SEED_ON_EMPTY=true to force seeding in production anyway.
+ */
+export function seedAllowedOnEmpty(driver: string): boolean {
+  if (process.env['NODE_ENV'] !== 'production' || process.env['SEED_ON_EMPTY'] === 'true') {
+    return true;
+  }
+  console.warn(
+    `[db] ${driver} database is empty but NODE_ENV=production — skipping the in-memory seed ` +
+      '(seed the database from a dev machine, or set SEED_ON_EMPTY=true to override).',
+  );
+  return false;
 }
 
 /** Dialect-neutral DDL (works on SQLite and PostgreSQL). */

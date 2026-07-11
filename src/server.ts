@@ -65,6 +65,10 @@ const ready = engine.init().catch((err) => {
   console.error('[db] initialization failed', err);
   process.exit(1);
 });
+ready.then(() => {
+  const mem = process.memoryUsage();
+  console.log(`[memory] rss=${Math.round(mem.rss / 1024 / 1024)}MB heapUsed=${Math.round(mem.heapUsed / 1024 / 1024)}MB heapTotal=${Math.round(mem.heapTotal / 1024 / 1024)}MB`);
+});
 
 app.use('/api', async (req, res, next) => {
   await ready;
